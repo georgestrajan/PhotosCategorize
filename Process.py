@@ -5,9 +5,12 @@ import datetime
 import sys
 import exifread
 import csv
+from operator import itemgetter, attrgetter, methodcaller
 
-src = "/home/george/Pictures/Test"
-src = os.path.abspath(src)
+src = "/home/george/Documents/Sorted"
+dest = "/home/george/Pictures"
+
+csvFile = '/home/george/Documents/Programming/PhotosCategorize/TripDates.csv'
 
 #
 #   Class that holds a record of the arrival date at a certain place
@@ -19,15 +22,15 @@ class TripRecord:
             self.ValueString = valueString
             self.Country = valueString[4]
             self.Place = valueString[3]
-            self.Year = valueString[2]
-            self.Month = valueString[1]
-            self.Day = valueString[0]
+            self.Year = int(valueString[2])
+            self.Month = int(valueString[1])
+            self.Day = int(valueString[0])
         else:
             self.ValueString = None
             
     def __str__(self):
         if self.ValueString:        
-            return "Day:" + self.Day + " Month:" + self.Month + " Year:" + self.Year + " Place:" + self.Place + " Country:" + self.Country
+            return "Day:" + str(self.Day) + " Month:" + str(self.Month) + " Year:" + str(self.Year) + " Place:" + self.Place + " Country:" + self.Country
         else:
             return "Empty"
             
@@ -54,15 +57,16 @@ class TripRecord:
 #   Class which holds information about a media file to be processsed
 #
 class MediaFile:
-    def __init__(self, fullPath, mediaType, createdDateTime):
+    def __init__(self, fullPath, fileName, mediaType, createdDateTime):
         if fullPath:
             self.FullPath = fullPath
+            self.FileName = fileName
             self.MediaType = mediaType
             self.CreatedDateTime = createdDateTime
             self.TripRecord = TripRecord("")
             
     def __str__(self):
-        return "Path:" + self.FullPath + " MediaType:" + self.MediaType + " DateTime:" + time.strftime("%d %b %Y %H:%M:%S", self.CreatedDateTime) + " Trip Record:" + str(self.TripRecord)
+        return "Path:" + self.FullPath + " File name:" + self.FileName + " MediaType:" + self.MediaType + " DateTime:" + time.strftime("%d %b %Y %H:%M:%S", self.CreatedDateTime) + " Trip Record:" + str(self.TripRecord)
 
     def __repr__(self):
         return str(self)
@@ -72,38 +76,58 @@ class MediaFile:
 
 numberOfPictures = 0
 numberOfMovies = 0
-picProcessed = False
 filesToProcess = []
 
 # create a list of filesToProcess by recursively walking from the src folder and finding pictures and videos
+src = os.path.abspath(src)
 for root, subdirs, files in os.walk(src):
     for file in files:
         fullPath = os.path.join(root, file)
                
-        if file.lower().find(".jpg") > 0 and picProcessed == False:
+        if file.lower().find(".jpg") > 0:
             f = open(fullPath, 'rb')        
             tags = exifread.process_file(f)
-            picProcessed = True
             for tag in tags.keys():
                 if tag in ('EXIF DateTimeOriginal'):
                     # format: 2015:10:08 00:31:47
-                    filesToProcess.append(MediaFile(fullPath, "picture", time.strptime(str(tags[tag]), "%Y:%m:%d %H:%M:%S")))
+                                        
+                    try:
+                        tagDateTime = time.strptime(str(tags[tag]), "%Y:%m:%d %H:%M:%S")
+                    except ValueError:
+                        tagDateTime = time.strptime(str(tags[tag]), "%d/%m/%Y %H:%M")
+                        
+                    filesToProcess.append(MediaFile(fullPath, file, "picture", tagDateTime))
                     numberOfPictures = numberOfPictures + 1
         
         if file.lower().find(".mp4") > 0 or file.lower().find(".avi") > 0:
-            filesToProcess.append(MediaFile(fullPath, "video", time.gmtime(os.path.getmtime(fullPath))))
+            filesToProcess.append(MediaFile(fullPath, file, "video", time.gmtime(os.path.getmtime(fullPath))))
             numberOfMovies = numberOfMovies + 1
-           
-tripRecords = TripRecord.readLocationsFile('/home/george/Documents/Programming/PhotosCategorize/TripDates.csv')
 
-# go through each file and assign a valid TripRecord
+print "Number of files ready for processing: %s" % (numberOfPictures + numberOfMovies)
+
+# read the CSV file and sort it by date           
+tripRecords = TripRecord.readLocationsFile(csvFile)
+tripRecords = sorted(tripRecords, key = attrgetter('Year', 'Month', 'Day'))
+
+# go through each file, find a valid TripRecord for it, create the target folder for it and move the file
+numberOfFilesMoved = 0
+
 for f in filesToProcess:
-    for t in tripRecords:
-        if f.CreatedDateTime.tm_year == t.Year and f.CreatedDateTime.tm_mon == t.Month and f.CreatedDateTime.tm_mday == t.Day:
-            f.TripRecord = t
-            
+    for i in range(len(tripRecords)):
+        tripRecordTime = time.strptime(str(tripRecords[i].Year) + ":" + str(tripRecords[i].Month) + ":" + str(tripRecords[i].Day), "%Y:%m:%d")
+        if (f.CreatedDateTime >= tripRecordTime):
+            f.TripRecord = tripRecords[i]
+                    
+    if hasattr(f, "TripRecord") and hasattr(f.TripRecord, "Year"):
+        destPath = os.path.join(dest, str(f.TripRecord.Year), str(f.TripRecord.Country), str(f.TripRecord.Place))
+        if not os.path.exists(destPath):
+            os.makedirs(destPath)
+        fullDestPath = os.path.join(destPath, f.FileName)
+        
+        print "Move %s to %s" % (f.FullPath, fullDestPath)
+        os.rename(f.FullPath, fullDestPath)
+        numberOfFilesMoved = numberOfFilesMoved + 1
+    else:
+        print "WARNING: File %s does not have an associated trip record" % f.FullPath
 
-
-print "Number of pictures:", numberOfPictures
-print "Number of movies:", numberOfMovies
-print filesToProcess
+print "Number of files moved:", numberOfFilesMoved

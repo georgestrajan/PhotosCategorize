@@ -2,7 +2,9 @@
 
 # This script iterates through all of the pictures and videos in a folder and processes the moves or copies the files based on the date they were taken
 import os
+import shutil
 import time
+import collections
 import datetime
 import sys
 import exifread
@@ -10,12 +12,19 @@ import csv
 import argparse
 from operator import itemgetter, attrgetter, methodcaller
 
-src = "/home/george/Pictures/Original"
-dest = "/home/george/Pictures/Sorted"
 TAG_EXIF_DateTimeOriginal = "EXIF DateTimeOriginal"
-csvFile = '/home/george/Documents/Programming/PhotosCategorize/TripDates.csv'
 
-verbose = True
+parser = argparse.ArgumentParser()
+parser.add_argument("source", help="Source directory where all the original files are")
+parser.add_argument("dest", help="Destination directory where all of the files will be moved\copied to")
+parser.add_argument("csv", help="CSV file which contains the dates and places where the photos were taken. Columns are Day,Month,Year,Location,Country")
+parser.add_argument("--v", help="set verbosity. 0 is for errors only. 1 is default. 2 is verbose.")
+parser.add_argument("--o", help="the operation to perform on the files. Can be copy, move or display (to just display the output)")
+args = parser.parse_args()
+
+src = args.source #"/home/george/Pictures/Original"
+dest = args.dest #"/home/george/Pictures/Sorted"
+csvFile = args.csv #'/home/george/Documents/Programming/PhotosCategorize/TripDates.csv'
 
 #
 #   Class that holds a record of the arrival date at a certain place
@@ -55,7 +64,6 @@ class TripRecord:
             
         return returnList
 
-
 #
 #   Class which holds information about a media file to be processsed
 #
@@ -73,16 +81,30 @@ class MediaFile:
     def __repr__(self):
         return str(self)
 
-# Prints a message to the console if the verbose option is set
-def printMessage(strMessage):
-    if verbose:
+#
+# Prints a message to the console
+# Verbosity is as follows:
+#   0 is for errors (which are always displayed)
+#   1 is for regular verbosity
+#   2 is for extra verbose
+def printMessage(strMessage, verbosity = 1):
+    if verbosity == 0:
         print(strMessage)
+    elif verbosity == 1:
+        print(strMessage)
+    elif args.v == verbosity:
+        print(strMessage)
+
 
 # Processes a file according to the chosen method (copy, move)
 def processFile(fullFilePath, fullDestPath):
-    printMessage("Move %s to %s" % (f.FullPath, fullDestPath))
-    #os.rename(f.FullPath, fullDestPath)
-
+    printMessage("Processing file %s. Destination folder is %s" % (f.FullPath, fullDestPath), 2)
+    if args.o == "copy":
+        printMessage("Copying %s to %s" % (f.FullPath, fullDestPath))
+        shutil.copy(f.FullPath, fullDestPath)
+    elif args.o == "move":
+        printMessage("Moving %s to %s" % (f.FullPath, fullDestPath))
+        os.rename(f.FullPath, fullDestPath)
 
 # this command will count the number of pictures and videos in the folder
 # find /home/george/Pictures/Test -regex '.*\.\(jpg\|JPG\|mp4\|MP4\)' | tee >(wc -l)
@@ -90,6 +112,16 @@ def processFile(fullFilePath, fullDestPath):
 numberOfPictures = 0
 numberOfMovies = 0
 filesToProcess = []
+
+if not os.path.exists(src):
+    printMessage("Source folder '%s' does not exist!" % src, 0)
+    sys.exit(1)
+
+if not os.path.exists(csvFile):
+    printMessage("CSV file '%s' does not exist!" % csvFile, 0)
+    sys.exit(1)
+
+printMessage("Processing files from '%s'. Destination is '%s'. CSV file is '%s'\n" % (src, dest, csvFile))
 
 # create a list of filesToProcess by recursively walking from the src folder and finding pictures and videos
 src = os.path.abspath(src)
@@ -99,7 +131,7 @@ for root, subdirs, files in os.walk(src):
 
     for file in files:
         fullPath = os.path.join(root, file)
-        if file.lower().find(".jpg") > 0 and numberOfPictures < 200:
+        if file.lower().find(".jpg") > 0:
             f = open(fullPath, 'rb')        
             tags = exifread.process_file(f, details = False, stop_tag = TAG_EXIF_DateTimeOriginal)
             for tag in tags.keys():
@@ -117,7 +149,7 @@ for root, subdirs, files in os.walk(src):
             filesToProcess.append(MediaFile(fullPath, file, time.gmtime(os.path.getmtime(fullPath))))
             numberOfMovies += 1
 
-print "Number of files ready for processing: %s" % (numberOfPictures + numberOfMovies)
+print "Number of files ready for processing: %s\n" % (numberOfPictures + numberOfMovies)
 
 # read the CSV file and sort it by date           
 tripRecords = TripRecord.readLocationsFile(csvFile)
@@ -154,4 +186,4 @@ for f in filesToProcess:
         print "WARNING: File %s does not have an associated trip record" % f.FullPath
 
 for k, v in destinationPathNumberOfFiles.iteritems():
-    printMessage("Processed %d files in folder %s" % (v, k))
+    printMessage("\n%d files processed to destination folder %s" % (v, k))

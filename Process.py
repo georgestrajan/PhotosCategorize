@@ -1,11 +1,11 @@
 #!/usr/bin/python
 
-# This script iterates through all of the pictures and videos in a folder and processes the moves or copies the files based on the date they were taken
+# This script iterates through all of the pictures and videos in a folder and processes the moves or copies the files based on the date they were taken\
+# There are some TODOs in here
+# Pictures are considered files that have .jpg in their filename. Videos are files that have .mp4 or .avi
 import os
 import shutil
 import time
-import collections
-import datetime
 import sys
 import exifread
 import csv
@@ -18,13 +18,14 @@ parser = argparse.ArgumentParser()
 parser.add_argument("source", help="Source directory where all the original files are")
 parser.add_argument("dest", help="Destination directory where all of the files will be moved\copied to")
 parser.add_argument("csv", help="CSV file which contains the dates and places where the photos were taken. Columns are Day,Month,Year,Location,Country")
-parser.add_argument("--v", help="set verbosity. 0 is for errors only. 1 is default. 2 is verbose.")
-parser.add_argument("--o", help="the operation to perform on the files. Can be copy, move or display (to just display the output)")
+parser.add_argument("--v", help="Set verbosity. 0 is for errors only. 1 is default. 2 is verbose.")
+parser.add_argument("--o", help="The operation to perform on the files. Can be copy, move or display (to just display the output)")
 args = parser.parse_args()
 
 src = args.source #"/home/george/Pictures/Original"
 dest = args.dest #"/home/george/Pictures/Sorted"
 csvFile = args.csv #'/home/george/Documents/Programming/PhotosCategorize/TripDates.csv'
+operation = args.o
 
 #
 #   Class that holds a record of the arrival date at a certain place
@@ -96,23 +97,27 @@ def printMessage(strMessage, verbosity = 1):
         print(strMessage)
 
 
-# Processes a file according to the chosen method (copy, move)
+#
+#  Processes a file according to the chosen method (copy, move)
+#
 def processFile(fullFilePath, fullDestPath):
     printMessage("Processing file %s. Destination folder is %s" % (f.FullPath, fullDestPath), 2)
-    if args.o == "copy":
+    if operation == "copy":
         printMessage("Copying %s to %s" % (f.FullPath, fullDestPath))
         shutil.copy(f.FullPath, fullDestPath)
-    elif args.o == "move":
+    elif operation == "move":
         printMessage("Moving %s to %s" % (f.FullPath, fullDestPath))
         os.rename(f.FullPath, fullDestPath)
 
-# this command will count the number of pictures and videos in the folder
-# find /home/george/Pictures/Test -regex '.*\.\(jpg\|JPG\|mp4\|MP4\)' | tee >(wc -l)
+#
+#   Main script
+#
 
 numberOfPictures = 0
 numberOfMovies = 0
 filesToProcess = []
 
+# check the arguments first
 if not os.path.exists(src):
     printMessage("Source folder '%s' does not exist!" % src, 0)
     sys.exit(1)
@@ -121,7 +126,7 @@ if not os.path.exists(csvFile):
     printMessage("CSV file '%s' does not exist!" % csvFile, 0)
     sys.exit(1)
 
-printMessage("Processing files from '%s'. Destination is '%s'. CSV file is '%s'\n" % (src, dest, csvFile))
+printMessage("\nProcessing files from '%s'\nDestination is '%s'\nCSV file is '%s'\nMethod of processing is '%s'\n" % (src, dest, csvFile, operation))
 
 # create a list of filesToProcess by recursively walking from the src folder and finding pictures and videos
 src = os.path.abspath(src)
@@ -136,7 +141,7 @@ for root, subdirs, files in os.walk(src):
             tags = exifread.process_file(f, details = False, stop_tag = TAG_EXIF_DateTimeOriginal)
             for tag in tags.keys():
                 if tag == TAG_EXIF_DateTimeOriginal:
-                    # format: 2015:10:08 00:31:47
+                    # TODO Make sure this works on all locales!
                     try:
                         tagDateTime = time.strptime(str(tags[tag]), "%Y:%m:%d %H:%M:%S")
                     except ValueError:
@@ -156,15 +161,17 @@ tripRecords = TripRecord.readLocationsFile(csvFile)
 tripRecords = sorted(tripRecords, key = attrgetter('DateTime'))
 
 # go through each file, find a valid TripRecord for it, create the target folder for it and move the file
-numberOfFilesMoved = 0
 filesNotMoved = []
 destinationPathNumberOfFiles = {}
 
 for f in filesToProcess:
+
     for i in range(len(tripRecords)):
+        # if file's date is after the trip record, select the trip record
         if (f.CreatedDateTime >= tripRecords[i].DateTime):
             f.TripRecord = tripRecords[i]
-                    
+
+    # if we found a valid trip record for the file, process it
     if hasattr(f, "TripRecord") and hasattr(f.TripRecord, "DateTime"):
         destPath = os.path.join(dest, str(f.TripRecord.DateTime.tm_year), str(f.TripRecord.Country), str(f.TripRecord.Place))
 
@@ -173,17 +180,26 @@ for f in filesToProcess:
             os.makedirs(destPath)
         fullDestPath = os.path.join(destPath, f.FileName)
 
+        # keep a dictionary of destination paths and number of files we processed
         if destPath in destinationPathNumberOfFiles:
             destinationPathNumberOfFiles[destPath] += 1
         else:
             destinationPathNumberOfFiles[destPath] = 0
 
         processFile(f.FullPath, fullDestPath)
-        numberOfFilesMoved = numberOfFilesMoved + 1
 
     else:
         filesNotMoved.append(f.FullPath)
-        print "WARNING: File %s does not have an associated trip record" % f.FullPath
 
+totalFilesProcessed = 0
 for k, v in destinationPathNumberOfFiles.iteritems():
-    printMessage("\n%d files processed to destination folder %s" % (v, k))
+    printMessage("%d files processed to destination folder %s" % (v, k))
+    totalFilesProcessed += v
+
+printMessage("\nOperation complete. %d total files processed." % (totalFilesProcessed))
+
+if len(filesNotMoved) > 0:
+    printMessage("\nFound %d picture(s) and/or video(s) in the source folder for which there was no matching trip record in the CSV." % len(filesNotMoved), 0)
+    showWarnings = raw_input("Display these files ? (y/n)")
+    if showWarnings.lower() == "y":
+        print filesNotMoved
